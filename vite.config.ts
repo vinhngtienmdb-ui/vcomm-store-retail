@@ -19,7 +19,21 @@ const basePath = process.env.BASE_PATH ?? "/";
 const host = process.env.HOST ?? "localhost";
 
 const apiProxyTarget = process.env.API_PROXY_TARGET ?? "https://vcomm-storeretail.opencore.com.vn";
+const localErpTarget = "http://localhost:3000";
+
 const proxyConfig = {
+  "/api/gemini": {
+    target: localErpTarget,
+    changeOrigin: true,
+    secure: false,
+    ws: true
+  },
+  "/api/inventory": {
+    target: localErpTarget,
+    changeOrigin: true,
+    secure: false,
+    ws: true
+  },
   "/api": {
     target: apiProxyTarget,
     changeOrigin: true,

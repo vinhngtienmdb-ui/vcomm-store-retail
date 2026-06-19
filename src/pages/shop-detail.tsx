@@ -269,6 +269,19 @@ export default function ShopDetailPage() {
   const [galleryProduct, setGalleryProduct] = useState<StorefrontProduct | null>(null);
   const [galleryIndex, setGalleryIndex] = useState(0);
   const [mobileCartOpen, setMobileCartOpen] = useState(false);
+  const [warehouseStock, setWarehouseStock] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetch("/api/inventory/warehouse-stock")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success && Array.isArray(data.stock)) {
+          setWarehouseStock(data.stock);
+        }
+      })
+      .catch((err) => console.error("Error fetching warehouse stock:", err));
+  }, []);
+
 
   const normalizeText = (s: string) =>
     s
@@ -1487,6 +1500,22 @@ export default function ShopDetailPage() {
                           {p.categoryName}
                         </p>
                       )}
+                      {/* Warehouse Stock Display */}
+                      {(() => {
+                        const productStockList = warehouseStock.filter((s: any) => s.product_id === p.id || s.product_name === p.name);
+                        if (productStockList.length > 0) {
+                          return (
+                            <div className="text-[10px] text-muted-foreground mt-1 flex flex-wrap gap-1">
+                              {productStockList.map((s: any) => (
+                                <span key={s.id} className="bg-muted/80 border px-1 py-0.5 rounded text-[9px] font-semibold text-primary/80">
+                                  {s.store_id === "ST-01" ? "Kho Q1" : s.store_id === "ST-02" ? "Kho Cầu Giấy" : `Kho ${s.store_id}`}: {s.quantity} {p.unit || 'cái'}
+                                </span>
+                              ))}
+                            </div>
+                          );
+                        }
+                        return null;
+                      })()}
                       <div className="flex items-center justify-between mt-2 gap-2">
                         <div className="flex flex-col">
                           <span className="font-semibold text-primary">{formatCurrency(p.price)}</span>
@@ -1811,6 +1840,7 @@ export default function ShopDetailPage() {
         onDecrement={
           galleryProduct ? () => updateQty(galleryProduct.id, -1) : undefined
         }
+        onSelectProduct={setGalleryProduct}
       />
     </div>
   );

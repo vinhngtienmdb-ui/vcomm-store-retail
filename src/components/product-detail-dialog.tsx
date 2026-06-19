@@ -7,7 +7,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight, ImageIcon, Plus, Minus, ShoppingBag } from "lucide-react";
+import { ChevronLeft, ChevronRight, ImageIcon, Plus, Minus, ShoppingBag, Sparkles } from "lucide-react";
 import { useT } from "@/lib/i18n-context";
 import { formatCurrency } from "@/lib/format";
 
@@ -31,6 +31,7 @@ interface Props {
   onAddToCart?: () => void;
   /** Callback giảm 1 trong giỏ. */
   onDecrement?: () => void;
+  onSelectProduct?: (product: any) => void;
 }
 
 function getImages(p: ProductDetailLike): string[] {
@@ -47,12 +48,36 @@ export function ProductDetailDialog({
   quantityInCart = 0,
   onAddToCart,
   onDecrement,
+  onSelectProduct,
 }: Props) {
   const t = useT();
   const [index, setIndex] = useState(0);
+  const [similarProducts, setSimilarProducts] = useState<any[]>([]);
+  const [loadingSimilar, setLoadingSimilar] = useState(false);
 
   useEffect(() => {
     if (open) setIndex(0);
+  }, [open, product?.name]);
+
+  useEffect(() => {
+    if (open && product?.name) {
+      setLoadingSimilar(true);
+      fetch("/api/gemini/vector-search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: product.name })
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.success && Array.isArray(data.products)) {
+            setSimilarProducts(data.products.filter((p: any) => p.name !== product.name));
+          }
+        })
+        .catch((err) => console.error("Error fetching similar products:", err))
+        .finally(() => setLoadingSimilar(false));
+    } else {
+      setSimilarProducts([]);
+    }
   }, [open, product?.name]);
 
   if (!product) return null;
@@ -158,6 +183,66 @@ export function ProductDetailDialog({
             <p className="text-sm text-muted-foreground italic" data-testid="text-product-detail-no-description">
               {t.products.description}: —
             </p>
+          )}
+
+          {/* AI Similar Products Section */}
+          {open && product && (
+            <div className="border-t pt-4 mt-6 space-y-3">
+              <div className="flex items-center gap-2 text-primary font-semibold text-sm">
+                <Sparkles className="h-4 w-4 animate-pulse" />
+                <span>Gợi ý dành riêng cho bạn (AI Personalization)</span>
+              </div>
+              {loadingSimilar ? (
+                <div className="flex items-center justify-center py-6 text-muted-foreground text-xs">
+                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-primary border-t-transparent mr-2"></div>
+                  Đang tìm kiếm sản phẩm tương tự...
+                </div>
+              ) : similarProducts.length === 0 ? (
+                <p className="text-xs text-muted-foreground italic py-2">Không tìm thấy sản phẩm tương tự.</p>
+              ) : (
+                <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin">
+                  {similarProducts.map((p) => {
+                    const pPrice = typeof p.price === 'string' ? parseFloat(p.price) : p.price;
+                    const pImg = p.image_url || '';
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => {
+                          onSelectProduct?.({
+                            id: p.id,
+                            sku: p.sku,
+                            name: p.name,
+                            description: p.description,
+                            price: pPrice,
+                            imageUrl: pImg || null,
+                            images: pImg ? [pImg] : [],
+                            inStock: true
+                          });
+                        }}
+                        className="flex flex-col text-left border rounded-lg p-2.5 w-32 shrink-0 hover:border-primary transition-colors cursor-pointer group bg-card shadow-sm"
+                      >
+                        <div className="aspect-square w-full rounded-md bg-muted mb-2 overflow-hidden relative">
+                          {pImg ? (
+                            <img src={pImg} alt={p.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-muted-foreground opacity-40">
+                              <ImageIcon className="h-5 w-5" />
+                            </div>
+                          )}
+                        </div>
+                        <p className="text-xs font-medium line-clamp-2 leading-tight flex-1 break-words">
+                          {p.name}
+                        </p>
+                        <p className="text-xs font-bold text-primary mt-1.5">
+                          {formatCurrency(pPrice)}
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           )}
         </div>
 

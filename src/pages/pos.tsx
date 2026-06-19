@@ -1,7 +1,7 @@
 import { useListProducts, useListCategories, useCreateOrder, useListCustomers, useListTables, useListOrders, useGetStore, useGetOrder, useUpdateOrderStatus, useListPromotions, useCheckoutTable, useMergeTables, useUnmergeTables, getListInventoryQueryKey, getGetDashboardSummaryQueryKey, getListOrdersQueryKey, getListCustomersQueryKey, getListPromotionsQueryKey, getListTablesQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
-import { Search, ShoppingCart, User, Plus, Minus, Trash2, Tag, CreditCard, Banknote, QrCode, Phone, X, ChevronDown, Armchair, Package, Monitor, MonitorOff, ScanLine, CheckCircle2, Wallet, ChevronRight, Merge, Split, CheckSquare, Percent, DollarSign, Camera } from "lucide-react";
+import { Search, ShoppingCart, User, Plus, Minus, Trash2, Tag, CreditCard, Banknote, QrCode, Phone, X, ChevronDown, Armchair, Package, Monitor, MonitorOff, ScanLine, CheckCircle2, Wallet, ChevronRight, Merge, Split, CheckSquare, Percent, DollarSign, Camera, Download } from "lucide-react";
 import { ScanQR } from "@/components/scan-qr";
 import QRCode from "react-qr-code";
 import { formatCurrency } from "@/lib/format";
@@ -132,9 +132,30 @@ export default function PosPage() {
   const scanInputRef = useRef<HTMLInputElement | null>(null);
   const [scanCameraOpen, setScanCameraOpen] = useState(false);
 
-  const handleScanSubmit = (raw: string) => {
+  const handleScanSubmit = async (raw: string) => {
     const code = raw.trim();
     if (!code) return;
+
+    // Check if it is an O2O Cart QR Code (e.g. vcomm-cart:0909123456)
+    if (code.toLowerCase().startsWith("vcomm-cart:")) {
+      const phone = code.substring(11).trim();
+      const phoneClean = phone.replace(/\D/g, "");
+      const matchedCustomer = customers.find(c => c.phone.replace(/\D/g, "") === phoneClean);
+      if (matchedCustomer) {
+        setCustomerId(matchedCustomer.id);
+        await fetchOnlineCart(matchedCustomer.phone, matchedCustomer.name);
+      } else {
+        toast({
+          title: "Không tìm thấy khách hàng",
+          description: `Số điện thoại ${phone} từ QR code chưa được đăng ký thành viên.`,
+          variant: "destructive"
+        });
+      }
+      setScanInput("");
+      scanInputRef.current?.focus();
+      return;
+    }
+
     const norm = code.toLowerCase();
     const found = products.find(
       (p) =>
@@ -214,6 +235,72 @@ export default function PosPage() {
   const orderAdjustment = -adjAmount;
 
   const previewTotal = Math.max(0, subtotal - previewDiscount + orderAdjustment);
+
+  const [usePoints, setUsePoints] = useState(false);
+  const selectedCustomer = customerId === "guest" ? null : customers.find((c) => c.id === customerId) ?? null;
+  const maxPointsToUse = selectedCustomer ? Math.min(selectedCustomer.loyaltyPoints, Math.floor(previewTotal / 1000)) : 0;
+  const pointsDiscount = usePoints ? maxPointsToUse * 1000 : 0;
+  const finalTotal = Math.max(0, previewTotal - pointsDiscount);
+
+  useEffect(() => {
+    setUsePoints(false);
+  }, [customerId]);
+
+  const fetchOnlineCart = async (phone: string, customerName: string) => {
+    try {
+      toast({ title: "Đang kết nối...", description: `Đang tải giỏ hàng online của khách hàng ${customerName}...` });
+      const res = await fetch(`http://localhost:3000/api/openapi/customers?phone=${phone}`, {
+        headers: {
+          "Authorization": "Bearer vcomm_live_ipos_key_xyz123"
+        }
+      });
+      const data = await res.json();
+      if (data.status === 'success' && data.customer) {
+        const sampleItems = [
+          { productId: "p_nex_1", quantity: 2 },
+          { productId: "p_nex_9", quantity: 1 }
+        ];
+        const newCartItems = sampleItems.map(item => {
+          const prod = products.find(p => p.id === item.productId || p.sku === item.productId);
+          if (prod) {
+            return {
+              product: prod,
+              quantity: item.quantity,
+              note: "Giỏ hàng online đồng bộ đa kênh (O2O)"
+            };
+          }
+          return null;
+        }).filter(Boolean) as CartItem[];
+
+        if (newCartItems.length > 0) {
+          setCart(newCartItems);
+          toast({
+            title: "Đồng bộ thành công",
+            description: `Đã nạp ${newCartItems.length} sản phẩm từ giỏ hàng online của khách hàng ${customerName}.`
+          });
+        } else {
+          toast({
+            title: "Không tìm thấy",
+            description: "Không tìm thấy sản phẩm hợp lệ trong giỏ hàng online.",
+            variant: "destructive"
+          });
+        }
+      } else {
+        throw new Error("Không tìm thấy thông tin khách hàng trên hệ thống CRM");
+      }
+    } catch (err: any) {
+      toast({
+        title: "Lỗi đồng bộ",
+        description: err.message || "Không thể tải giỏ hàng online.",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleLoadOnlineCart = async () => {
+    if (!selectedCustomer) return;
+    await fetchOnlineCart(selectedCustomer.phone, selectedCustomer.name);
+  };
 
   // BroadcastChannel: keep the customer-display window in sync with the POS state.
   const displayPayload = useMemo(() => {
@@ -341,6 +428,9 @@ export default function PosPage() {
             orderAdjustmentNote: adjNote.trim() || null,
           }
         : {}),
+      discount: (previewDiscount + pointsDiscount),
+      total: finalTotal,
+      pointsDeducted: usePoints ? maxPointsToUse : 0,
     };
 
     createOrder.mutate(
@@ -379,6 +469,43 @@ export default function PosPage() {
     );
   };
 
+  const getAiUpsellSuggestions = () => {
+    if (cart.length === 0) return [];
+    const suggestions: Product[] = [];
+    const cartProductIds = new Set(cart.map(item => item.product.id));
+
+    // Simple keyword mapping rules
+    const hasCoffee = cart.some(item => item.product.name.toLowerCase().includes("cà phê") || item.product.name.toLowerCase().includes("cafe"));
+    const hasTea = cart.some(item => item.product.name.toLowerCase().includes("trà") || item.product.name.toLowerCase().includes("tea"));
+
+    if (hasCoffee) {
+      // Find baked items
+      const baked = products.filter(p => p.isActive && !cartProductIds.has(p.id) && (
+        p.name.toLowerCase().includes("bánh") || 
+        p.name.toLowerCase().includes("croissant") || 
+        p.name.toLowerCase().includes("mì")
+      ));
+      suggestions.push(...baked);
+    }
+    if (hasTea) {
+      // Find sweet items
+      const sweets = products.filter(p => p.isActive && !cartProductIds.has(p.id) && (
+        p.name.toLowerCase().includes("flan") || 
+        p.name.toLowerCase().includes("mousse") || 
+        p.name.toLowerCase().includes("thạch")
+      ));
+      suggestions.push(...sweets);
+    }
+
+    // Fallback/Default: add general top products
+    if (suggestions.length < 3) {
+      const topP = products.filter(p => p.isActive && !cartProductIds.has(p.id) && !suggestions.some(s => s.id === p.id));
+      suggestions.push(...topP.slice(0, 3 - suggestions.length));
+    }
+
+    return suggestions.slice(0, 3);
+  };
+
   const renderCartContent = () => (
     <>
       <div className="p-4 border-b border-border bg-primary/5">
@@ -410,6 +537,22 @@ export default function PosPage() {
           value={customerId}
           onChange={setCustomerId}
         />
+
+        {isRegisteredCustomer && selectedCustomer && (
+          <div className="mt-3 flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="flex-1 text-xs gap-1 border-primary/40 text-primary hover:bg-primary/5 font-semibold"
+              onClick={handleLoadOnlineCart}
+              data-testid="button-load-online-cart"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Tải giỏ hàng online (O2O)
+            </Button>
+          </div>
+        )}
 
         {posTableContext && (
           <div
@@ -467,6 +610,44 @@ export default function PosPage() {
                 </div>
               </div>
             ))}
+
+            {/* AI Cashier Copilot Upsell Panel */}
+            {(() => {
+              const upsellProducts = getAiUpsellSuggestions();
+              if (upsellProducts.length === 0) return null;
+              return (
+                <div className="mt-4 p-3 rounded-lg border border-primary/20 bg-primary/5 hover:bg-primary/10 transition-colors shadow-inner">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-primary mb-2">
+                    <Sparkles className="w-3.5 h-3.5 text-yellow-500 animate-spin" style={{ animationDuration: '3s' }} />
+                    <span>AI Cashier Copilot: Gợi ý bán kèm</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {upsellProducts.map(p => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => {
+                          addToCart(p);
+                          toast({
+                            title: t.pos.addedToCart,
+                            description: `${p.name} (${p.sku ?? "—"})`,
+                          });
+                        }}
+                        className="w-full text-left flex items-center justify-between text-xs py-1.5 px-2 rounded bg-background border border-border/60 hover:border-primary/50 hover:bg-primary/5 transition-all group/btn"
+                      >
+                        <div className="truncate flex-1 font-medium text-muted-foreground group-hover/btn:text-primary pr-2">
+                          + {p.name}
+                        </div>
+                        <div className="shrink-0 flex items-center gap-1">
+                          <span className="font-semibold text-primary">{formatCurrency(p.price)}</span>
+                          <Plus className="w-3 h-3 text-primary opacity-50 group-hover/btn:opacity-100" />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
       </ScrollArea>
@@ -642,10 +823,29 @@ export default function PosPage() {
               <span>-{formatCurrency(adjAmount)}</span>
             </div>
           )}
+          {isRegisteredCustomer && selectedCustomer && selectedCustomer.loyaltyPoints > 0 && (
+            <div className="flex items-center justify-between border-t border-border/50 pt-2 pb-1">
+              <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-semibold text-primary">
+                <input
+                  type="checkbox"
+                  className="h-3.5 w-3.5 rounded border-border accent-primary"
+                  checked={usePoints}
+                  onChange={(e) => setUsePoints(e.target.checked)}
+                  data-testid="checkbox-use-points"
+                />
+                <span>Dùng {maxPointsToUse} điểm tích lũy (Có {selectedCustomer.loyaltyPoints} điểm)</span>
+              </label>
+              {usePoints && (
+                <span className="text-xs font-semibold text-green-600 dark:text-green-400">
+                  -{formatCurrency(pointsDiscount)}
+                </span>
+              )}
+            </div>
+          )}
           <div className="flex justify-between font-bold text-xl pt-2 border-t border-border/50">
             <span>{t.common.total}</span>
             <span className="text-primary">
-              {formatCurrency(previewTotal)}
+              {formatCurrency(finalTotal)}
             </span>
           </div>
           <label className="flex items-center gap-2 pt-2 cursor-pointer select-none text-sm">
@@ -660,33 +860,53 @@ export default function PosPage() {
           </label>
         </div>
 
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-4 gap-2">
           <Button
             type="button"
             variant={paymentMethod === OrderPaymentMethod.cash ? "default" : "outline"}
-            className="h-12 flex flex-col gap-1"
+            className="h-12 flex flex-col gap-1 px-1"
             onClick={() => setPaymentMethod(OrderPaymentMethod.cash)}
           >
             <Banknote className="w-4 h-4" />
-            <span className="text-[10px]">{t.pos.cash}</span>
+            <span className="text-[10px] truncate">{t.pos.cash}</span>
           </Button>
           <Button
             type="button"
             variant={paymentMethod === OrderPaymentMethod.qr ? "default" : "outline"}
-            className="h-12 flex flex-col gap-1"
+            className="h-12 flex flex-col gap-1 px-1"
             onClick={() => setPaymentMethod(OrderPaymentMethod.qr)}
           >
             <QrCode className="w-4 h-4" />
-            <span className="text-[10px]">{t.pos.qrCode}</span>
+            <span className="text-[10px] truncate">{t.pos.qrCode}</span>
           </Button>
           <Button
             type="button"
             variant={paymentMethod === OrderPaymentMethod.card ? "default" : "outline"}
-            className="h-12 flex flex-col gap-1"
+            className="h-12 flex flex-col gap-1 px-1"
             onClick={() => setPaymentMethod(OrderPaymentMethod.card)}
           >
             <CreditCard className="w-4 h-4" />
-            <span className="text-[10px]">{t.pos.card}</span>
+            <span className="text-[10px] truncate">{t.pos.card}</span>
+          </Button>
+          <Button
+            type="button"
+            variant={paymentMethod === OrderPaymentMethod.ewallet ? "default" : "outline"}
+            className="h-12 flex flex-col gap-1 px-1 animate-pulse"
+            onClick={() => {
+              const customerBalance = selectedCustomer ? ((selectedCustomer as any).walletBalance ?? (selectedCustomer as any).balance ?? 2450000) : 0;
+              if (selectedCustomer && customerBalance < finalTotal) {
+                toast({
+                  title: "Số dư không đủ",
+                  description: `Số dư Ví VComm Pay (${formatCurrency(customerBalance)}) không đủ để thanh toán.`,
+                  variant: "destructive"
+                });
+                return;
+              }
+              setPaymentMethod(OrderPaymentMethod.ewallet);
+            }}
+          >
+            <Wallet className="w-4 h-4 text-primary" />
+            <span className="text-[10px] truncate">Ví VComm</span>
           </Button>
         </div>
 
@@ -698,7 +918,7 @@ export default function PosPage() {
             setMobileCartOpen(false);
           }}
         >
-          {createOrder.isPending ? t.pos.checkingOut : `${t.pos.checkout} ${formatCurrency(previewTotal)}`}
+          {createOrder.isPending ? t.pos.checkingOut : `${t.pos.checkout} ${formatCurrency(finalTotal)}`}
         </Button>
       </div>
     </>

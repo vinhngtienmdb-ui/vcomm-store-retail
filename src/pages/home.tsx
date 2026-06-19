@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Coffee, MapPin, Search, Star, Navigation, LogIn, UserPlus, Store, Phone, Clock, ChevronLeft, ChevronRight } from "lucide-react";
+import { Coffee, MapPin, Search, Star, Navigation, LogIn, UserPlus, Store, Phone, Clock, ChevronLeft, ChevronRight, Mic } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -65,6 +65,41 @@ export default function HomePage() {
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [galleryStore, setGalleryStore] = useState<PublicStore | null>(null);
   const [galleryIndex, setGalleryIndex] = useState(0);
+  const [isListening, setIsListening] = useState(false);
+
+  const startListening = () => {
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Trình duyệt của bạn không hỗ trợ nhận diện giọng nói.");
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = "vi-VN";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => {
+      setIsListening(true);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error(event);
+      setIsListening(false);
+    };
+
+    recognition.onresult = (event: any) => {
+      const speechToText = event.results[0][0].transcript;
+      setQuery(speechToText);
+    };
+
+    recognition.start();
+  };
 
   useEffect(() => {
     setGalleryIndex(0);
@@ -224,9 +259,19 @@ export default function HomePage() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder={t.home.searchPlaceholder}
-                className="pl-9 bg-background text-foreground"
+                className="pl-9 pr-10 bg-background text-foreground"
                 data-testid="input-search"
               />
+              <button
+                type="button"
+                onClick={startListening}
+                className={`absolute right-3 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-full hover:bg-muted text-muted-foreground transition-colors ${
+                  isListening ? "text-red-500 bg-red-100 dark:bg-red-950/50 animate-pulse" : ""
+                }`}
+                title="Tìm kiếm bằng giọng nói"
+              >
+                <Mic className="h-3.5 w-3.5" />
+              </button>
             </div>
             <Select value={district || "all"} onValueChange={(v) => setDistrict(v === "all" ? "" : v)}>
               <SelectTrigger className="bg-background text-foreground sm:w-48" data-testid="select-district">
