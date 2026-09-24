@@ -249,7 +249,7 @@ export default function PosPage() {
   const fetchOnlineCart = async (phone: string, customerName: string) => {
     try {
       toast({ title: "Đang kết nối...", description: `Đang tải giỏ hàng online của khách hàng ${customerName}...` });
-      const res = await fetch(`http://localhost:3000/api/openapi/customers?phone=${phone}`, {
+      const res = await fetch(`/api/openapi/customers?phone=${phone}`, {
         headers: {
           "Authorization": "Bearer vcomm_live_ipos_key_xyz123"
         }

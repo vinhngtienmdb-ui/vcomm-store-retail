@@ -12,14 +12,14 @@ if (fs.existsSync(envPath)) {
   console.log(`[vite.config] Loaded env from ${envPath}`);
 }
 
-const rawPort = process.env.PORT ?? process.env.PORT_WEB ?? "5173";
+const rawPort = process.env.PORT ?? process.env.PORT_WEB ?? "3003";
 const port = Number(rawPort);
 
 const basePath = process.env.BASE_PATH ?? "/";
 const host = process.env.HOST ?? "localhost";
 
 const apiProxyTarget = process.env.API_PROXY_TARGET ?? "https://vcomm-storeretail.opencore.com.vn";
-const localErpTarget = "http://localhost:3000";
+const localErpTarget = process.env.CORE_BACKEND_URL ?? "http://localhost:5000";
 
 const proxyConfig = {
   "/api/gemini": {
